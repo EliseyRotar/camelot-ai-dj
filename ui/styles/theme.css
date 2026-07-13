@@ -1,0 +1,15 @@
+:root {
+    --bg-base: #0B0D10;
+    --bg-panels: #15181C;
+    --deck1-color: #00D9FF;
+    --deck2-color: #FF3D81;
+    --warning-color: #FFA518;
+}
+
+body {
+    background-color: var(--bg-base);
+    color: white;
+    font-family: monospace;
+    margin: 0;
+    overflow: hidden; /* Avoid layout jitter */
+}
