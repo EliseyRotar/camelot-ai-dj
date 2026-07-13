@@ -1,0 +1,9 @@
+librosa
+scipy
+numpy
+pyloudnorm
+sounddevice
+soundfile
+fastapi
+uvicorn
+websockets
