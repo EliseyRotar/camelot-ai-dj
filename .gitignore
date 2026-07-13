@@ -1,0 +1,8 @@
+node_modules/
+src-tauri/target/
+__pycache__/
+*.sqlite
+*.sqlite3
+media/
+audio/
+.venv/
