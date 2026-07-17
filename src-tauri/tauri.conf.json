@@ -1,9 +1,10 @@
 {
   "build": {
-    "beforeDevCommand": "",
+    "beforeDevCommand": "python sidecar/main.py",
     "beforeBuildCommand": "",
     "devPath": "../ui",
-    "distDir": "../ui"
+    "distDir": "../ui",
+    "withGlobalTauri": true
   },
   "package": {
     "productName": "Camelot AI DJ",
@@ -11,7 +12,13 @@
   },
   "tauri": {
     "allowlist": {
-      "all": false
+      "all": false,
+      "shell": {
+        "all": false,
+        "execute": true,
+        "sidecar": true,
+        "open": true
+      }
     },
     "bundle": {
       "active": true,
@@ -20,9 +27,7 @@
       "deb": {
         "depends": []
       },
-      "externalBin": [
-        "sidecar/main"
-      ],
+      "externalBin": [],
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",
@@ -31,7 +36,7 @@
         "icons/icon.ico"
       ],
       "identifier": "com.camelot.ai.dj",
-      "longDescription": "",
+      "longDescription": "Autonomous AI DJ mixing app",
       "macOS": {
         "entitlements": null,
         "exceptionDomain": "",
@@ -39,8 +44,10 @@
         "providerShortName": null,
         "signingIdentity": null
       },
-      "resources": [],
-      "shortDescription": "",
+      "resources": [
+        "../sidecar/*"
+      ],
+      "shortDescription": "Camelot AI DJ",
       "targets": "all",
       "windows": {
         "certificateThumbprint": null,
@@ -60,7 +67,9 @@
         "height": 768,
         "resizable": true,
         "title": "Camelot AI DJ",
-        "width": 1366
+        "width": 1366,
+        "minWidth": 1366,
+        "minHeight": 768
       }
     ]
   }
