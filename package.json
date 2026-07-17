@@ -1,0 +1,16 @@
+{
+  "name": "camelot-ai-dj",
+  "version": "0.1.0",
+  "description": "Autonomous AI DJ mixing app",
+  "license": "MIT",
+  "scripts": {
+    "dev": "python sidecar/main.py",
+    "dev:ui": "python sidecar/main.py",
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^1.6.0"
+  }
+}
