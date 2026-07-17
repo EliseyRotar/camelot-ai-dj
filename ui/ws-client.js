@@ -9,6 +9,8 @@ const CamelotWS = (() => {
   let reconnectTimer = null;
   let _autopilotOn = false;
   let _activeTechnique = 'LongBlend';
+  let _loadedTrackId = { a: null, b: null };
+  const _dragging = { a: { fader: false, pitch: false, knob: false }, b: { fader: false, pitch: false, knob: false }, cross: false };
 
   const els = {};
   function el(id) { return els[id] || (els[id] = document.getElementById(id)); }
@@ -101,6 +103,7 @@ const CamelotWS = (() => {
       case 'track_loaded': {
         const deckKey = (msg.deck || '').replace('deck_', '');
         updateDeckTrackInfo(deckKey, msg.track);
+        _loadedTrackId[deckKey] = msg.track.id;
         Library.markLoaded(deckKey, msg.track.id);
         if (msg.features) {
           WaveformPainter.loadTrack(deckKey, msg.features.energy_curve, msg.features.vocal_curve, msg.features.beat_grid);
@@ -155,13 +158,15 @@ const CamelotWS = (() => {
 
   function updateDeck(key, data) {
     const prefix = key === 'a' ? 'da' : 'db';
-    // Channel fader (gain) and EQ knobs
-    if (data.gain !== undefined) Knobs.setValue(el(`${prefix}-gain-knob`), data.gain, false);
-    if (data.eq_high !== undefined) Knobs.setValue(el(`${prefix}-hi-knob`), data.eq_high, false);
-    if (data.eq_mid !== undefined) Knobs.setValue(el(`${prefix}-mid-knob`), data.eq_mid, false);
-    if (data.eq_low !== undefined) Knobs.setValue(el(`${prefix}-lo-knob`), data.eq_low, false);
-    // Channel fader cap position
-    if (data.gain !== undefined) { const cap = el(`${prefix}-fader-cap`); if (cap) cap.style.top = ((1 - data.gain) * 100) + '%'; }
+    // Skip telemetry-driven updates for controls the user is actively dragging
+    if (data.gain !== undefined && !_dragging[key].fader) {
+      Knobs.setValue(el(`${prefix}-gain-knob`), data.gain, false);
+      const cap = el(`${prefix}-fader-cap`);
+      if (cap) cap.style.top = ((1 - data.gain) * 100) + '%';
+    }
+    if (data.eq_high !== undefined && !Knobs.isDragging(el(`${prefix}-hi-knob`))) Knobs.setValue(el(`${prefix}-hi-knob`), data.eq_high, false);
+    if (data.eq_mid !== undefined && !Knobs.isDragging(el(`${prefix}-mid-knob`))) Knobs.setValue(el(`${prefix}-mid-knob`), data.eq_mid, false);
+    if (data.eq_low !== undefined && !Knobs.isDragging(el(`${prefix}-lo-knob`))) Knobs.setValue(el(`${prefix}-lo-knob`), data.eq_low, false);
 
     // Playhead + time
     if (data.play_progress !== undefined) {
@@ -184,7 +189,6 @@ const CamelotWS = (() => {
       playBtn.dataset.playing = data.is_playing ? 'true' : 'false';
       WaveformPainter.setPlaying(key, data.is_playing);
       JogWheel.setPlaying(key, data.is_playing);
-      if (data.is_playing) Library.markPlaying(/* not tracked by id here */ null);
     }
   }
 
@@ -218,10 +222,14 @@ const CamelotWS = (() => {
 
   // ── Wire all controls ─────────────────────────────────────────────
   document.addEventListener('DOMContentLoaded', () => {
-    // SCAN
-    el('btn-scan').addEventListener('click', () => {
-      const path = prompt('Enter path to your music library folder:', 'C:\\Users\\Admin\\Music');
-      if (path) send({ cmd: 'scan', path: path });
+    // SCAN (shift-click = force re-analyze everything)
+    el('btn-scan').addEventListener('click', (e) => {
+      const force = e.shiftKey;
+      const msg = force
+        ? 'FORCE re-analyze all files. This will re-run librosa on every track (slow). Enter path:'
+        : 'Scan music library folder (skips files already analyzed). Enter path:';
+      const path = prompt(msg, 'C:\\Users\\Admin\\Music');
+      if (path) send({ cmd: 'scan', path: path, force: force });
     });
 
     // AUTOPILOT toggle
@@ -261,13 +269,13 @@ const CamelotWS = (() => {
       const fader = el(`d${d}-fader`);
       const cap = el(`d${d}-fader-cap`);
       let dragging = false;
-      cap.addEventListener('mousedown', () => { dragging = true; });
-      document.addEventListener('mouseup', () => { dragging = false; });
+      cap.addEventListener('mousedown', () => { dragging = true; _dragging[d].fader = true; });
+      document.addEventListener('mouseup', () => { if (dragging) { dragging = false; _dragging[d].fader = false; } });
       document.addEventListener('mousemove', (e) => {
         if (!dragging) return;
         const r = fader.querySelector('.fader-track').getBoundingClientRect();
         const pct = Math.max(0, Math.min(1, 1 - (e.clientY - r.top) / r.height));
-        cap.style.top = (pct * 0 + (1 - pct) * 100) + '%';
+        cap.style.top = ((1 - pct) * 100) + '%';
         send({ cmd: 'set_deck_eq', deck: d, band: 'gain', value: pct });
       });
     });
@@ -278,8 +286,8 @@ const CamelotWS = (() => {
       const cap = el(`d${d}-pitch-cap`);
       const readout = el(`d${d}-pitch-readout`);
       let dragging = false;
-      cap.addEventListener('mousedown', () => { dragging = true; });
-      document.addEventListener('mouseup', () => { dragging = false; });
+      cap.addEventListener('mousedown', () => { dragging = true; _dragging[d].pitch = true; });
+      document.addEventListener('mouseup', () => { if (dragging) { dragging = false; _dragging[d].pitch = false; } });
       document.addEventListener('mousemove', (e) => {
         if (!dragging) return;
         const r = pf.querySelector('.pitch-track').getBoundingClientRect();
@@ -294,8 +302,8 @@ const CamelotWS = (() => {
     const xfader = el('crossfader');
     const xcap = el('crossfader-cap');
     let xdrag = false;
-    xcap.addEventListener('mousedown', () => { xdrag = true; });
-    document.addEventListener('mouseup', () => { xdrag = false; });
+    xcap.addEventListener('mousedown', () => { xdrag = true; _dragging.cross = true; });
+    document.addEventListener('mouseup', () => { if (xdrag) { xdrag = false; _dragging.cross = false; } });
     document.addEventListener('mousemove', (e) => {
       if (!xdrag) return;
       const r = xfader.querySelector('.crossfader-track').getBoundingClientRect();
