@@ -13,7 +13,7 @@ from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
 from analyzer import analyze_track
-from library import add_track, get_db, get_track_features
+from library import add_track, get_db, get_track_features, get_track_by_filepath, has_features
 from mixing_engine import engine, MASTER_SR, BLOCK_SIZE
 from techniques import LongBlend, BassSwap, QuickCut, EchoOut
 
@@ -140,21 +140,41 @@ def status():
     }
 
 
-def scan_directory_task(directory_path: str):
-    print(f"Starting sequential scan of {directory_path}...")
+def scan_directory_task(directory_path: str, force: bool = False):
+    print(f"Starting sequential scan of {directory_path} (force={force})...")
     patterns = ["*.mp3", "*.wav", "*.flac"]
     files = []
     for ext in patterns:
         files.extend(glob.glob(os.path.join(directory_path, "**", ext), recursive=True))
+    files.sort()
 
+    skipped = 0
+    analyzed = 0
     for idx, filepath in enumerate(files):
-        print(f"[{idx+1}/{len(files)}] Analyzing: {filepath}")
+        if not force:
+            try:
+                file_stat = os.stat(filepath)
+                fsize = file_stat.st_size
+                fmtime = file_stat.st_mtime
+            except OSError:
+                fsize = None
+                fmtime = None
+            existing = get_track_by_filepath(filepath)
+            if (existing is not None
+                    and existing.get('filesize') == fsize
+                    and abs((existing.get('file_mtime') or 0) - (fmtime or 0)) < 1.0
+                    and has_features(existing['id'])):
+                skipped += 1
+                print(f"[{idx+1}/{len(files)}] skip: {filepath}")
+                continue
+        print(f"[{idx+1}/{len(files)}] analyzing: {filepath}")
         try:
             result = analyze_track(filepath)
             add_track(result['metadata'], result['features'])
+            analyzed += 1
         except Exception as e:
             print(f"Error analyzing {filepath}: {e}")
-    print("Scan complete.")
+    print(f"Scan complete. {analyzed} analyzed, {skipped} skipped.")
 
 
 # ── Deck loading helpers (run in thread pool so asyncio stays responsive) ──
@@ -269,10 +289,11 @@ async def handle_ws_command(cmd: dict, websocket: WebSocket):
 
     elif action == 'scan':
         path = cmd.get('path', '.')
+        force = bool(cmd.get('force', False))
         if not os.path.isdir(path):
             await websocket.send_json({"type": "error", "message": "Invalid directory"})
             return
-        asyncio.create_task(_ws_scan_task(path))
+        asyncio.create_task(_ws_scan_task(path, force=force))
         await websocket.send_json({"type": "scan_progress", "progress": 0, "current_file": "Starting..."})
 
     elif action == 'get_recommendations':
@@ -452,12 +473,13 @@ async def _shutdown():
     engine.stop_stream()
 
 
-# ── Async scan with progress broadcast ─────────────────────────────────────
-async def _ws_scan_task(directory_path: str):
+# ── Async scan with progress broadcast (incremental) ───────────────────────
+async def _ws_scan_task(directory_path: str, force: bool = False):
     patterns = ["*.mp3", "*.wav", "*.flac"]
     files = []
     for ext in patterns:
         files.extend(glob.glob(os.path.join(directory_path, "**", ext), recursive=True))
+    files.sort()
 
     total = len(files)
     if total == 0:
@@ -469,21 +491,57 @@ async def _ws_scan_task(directory_path: str):
     import concurrent.futures
     single_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
+    skipped = 0
+    analyzed = 0
+    failed = 0
+
     for idx, filepath in enumerate(files):
         fname = os.path.basename(filepath)
+
+        # ── Incremental skip: avoid re-analyzing unchanged files ──
+        if not force:
+            try:
+                file_stat = os.stat(filepath)
+                fsize = file_stat.st_size
+                fmtime = file_stat.st_mtime
+            except OSError:
+                fsize = None
+                fmtime = None
+
+            existing = get_track_by_filepath(filepath)
+            if (existing is not None
+                    and existing.get('filesize') is not None
+                    and existing.get('file_mtime') is not None
+                    and existing['filesize'] == fsize
+                    and abs((existing['file_mtime'] or 0) - (fmtime or 0)) < 1.0
+                    and has_features(existing['id'])):
+                skipped += 1
+                # Still broadcast progress so the UI bar moves and shows it's not frozen
+                await broadcast({
+                    "type": "scan_progress",
+                    "progress": (idx + 1) / total,
+                    "current_file": f"[skip] {fname}  (already analyzed)"
+                })
+                continue
+
+        # ── Analyze ──
         await broadcast({
             "type": "scan_progress",
             "progress": idx / total,
-            "current_file": fname
+            "current_file": f"[analyze] {fname}"
         })
         try:
             result = await loop.run_in_executor(single_pool, analyze_track, filepath)
             add_track(result['metadata'], result['features'])
+            analyzed += 1
         except Exception as e:
+            failed += 1
             print(f"Error analyzing {filepath}: {e}")
 
     single_pool.shutdown(wait=False)
-    await broadcast({"type": "scan_progress", "progress": 1.0, "current_file": "Scan complete!"})
+
+    summary = f"Done. {analyzed} analyzed, {skipped} skipped, {failed} failed."
+    await broadcast({"type": "scan_progress", "progress": 1.0, "current_file": summary})
     conn = get_db()
     c2 = conn.cursor()
     c2.execute("SELECT COUNT(*) as n FROM tracks")
