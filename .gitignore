@@ -5,9 +5,12 @@ __pycache__/
 *.sqlite3
 media/
 audio/
+audio_cache/
 .venv/
 *.wav
 *.mp3
 *.flac
 sidecar_stdout.log
 sidecar_stderr.log
+inc_test.log
+inc_test_err.log
