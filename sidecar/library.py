@@ -73,9 +73,11 @@ def add_track(metadata, features):
     metadata: dict containing filepath, title, artist, duration, bpm, key_camelot, lufs_integrated,
               filesize (optional int), file_mtime (optional float)
     features: dict containing beat_grid (np.array), energy_curve (np.array), vocal_curve (np.array)
+    Returns: the track_id (int) of the inserted/updated row.
     """
     conn = get_db()
     cursor = conn.cursor()
+    track_id = None
 
     try:
         cursor.execute("""
@@ -107,6 +109,7 @@ def add_track(metadata, features):
         print(f"Error adding track {metadata['filepath']}: {e}")
     finally:
         conn.close()
+    return track_id
 
 def get_track_features(track_id):
     conn = get_db()
