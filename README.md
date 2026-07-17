@@ -84,13 +84,15 @@ When the native window opens, Rust automatically spawns the Python sidecar from 
 
 ## Using the App
 
-1. Click **SCAN LIB** in the header and pick a folder containing `.mp3`, `.wav`, or `.flac` files.
-2. The sidecar analyzes each track sequentially (librosa beat tracking, key detection, LUFS, RMS energy, vocal heuristic) and stores features in `sidecar/camelot.sqlite`.
-3. Click **LOAD** on a deck to open the library picker and choose a track. The deck loads, time-stretches to the master BPM, normalizes to -14 LUFS, and paints the waveform.
-4. Click **FIRE** to start a deck, **CUE** to stop it.
-5. Click a recommendation card in the Autopilot Feed to load that track onto the inactive deck.
-6. Pick a technique (LONG BLEND / BASS SWAP / QUICK CUT / ECHO OUT) and click **▶ TRIGGER** to execute the transition.
-7. Toggle **AUTOPILOT ON** to let the engine pick transitions for you.
+1. Click **SCAN** in the header and pick a folder containing `.mp3`, `.wav`, or `.flac` files.
+   - The scan is **incremental**: files already analyzed (matched by size + mtime) are skipped instantly, so re-scanning a folder is fast.
+   - **Shift+click SCAN** to force a full re-analysis of every file (use this if you changed the files or want to re-run the analyzer).
+2. The sidecar analyzes each new track sequentially (librosa beat tracking, key detection, LUFS, RMS energy, vocal heuristic) and stores features in `sidecar/camelot.sqlite`. Results persist across restarts — you only scan once.
+3. Click **LOAD** on a deck to open the library picker and choose a track, or click a row in the bottom library table to load it onto the inactive deck. The deck loads, time-stretches to the master BPM, normalizes to -14 LUFS, and paints the waveform.
+4. Click **PLAY** (the circular green button) to start a deck, **CUE** to stop it.
+5. Click a recommendation card in the Autopilot panel (center mixer) to load that track onto the inactive deck.
+6. Pick a technique (LONG BLEND / BASS SWAP / QUICK CUT / ECHO OUT) in the footer and click **▶ TRIGGER** to execute the transition.
+7. Toggle **AUTOPILOT** in the top bar to let the engine pick transitions for you.
 
 ## Testing
 
