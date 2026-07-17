@@ -6,6 +6,10 @@
 const Knobs = (() => {
   const SWEEP = 270;
   const activeKnob = { el: null, startY: 0, startVal: 0 };
+  const draggingKnobs = new Set();
+
+  function isDragging(knob) { return draggingKnobs.has(knob); }
+  function isAnyDragging() { return draggingKnobs.size > 0; }
 
   function valueToRotation(v) {
     // v: 0..1 -> rotation from -135 to +135
@@ -36,6 +40,7 @@ const Knobs = (() => {
       activeKnob.el = knob;
       activeKnob.startY = e.clientY;
       activeKnob.startVal = getValue(knob);
+      draggingKnobs.add(knob);
       e.preventDefault();
     });
 
@@ -60,6 +65,7 @@ const Knobs = (() => {
   });
 
   document.addEventListener('mouseup', () => {
+    if (activeKnob.el) draggingKnobs.delete(activeKnob.el);
     activeKnob.el = null;
   });
 
@@ -72,6 +78,6 @@ const Knobs = (() => {
 
   document.addEventListener('DOMContentLoaded', initAll);
 
-  return { bind, getValue, setValue, applyRotation };
+  return { bind, getValue, setValue, applyRotation, isDragging, isAnyDragging };
 })();
 window.Knobs = Knobs;
