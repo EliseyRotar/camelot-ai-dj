@@ -52,6 +52,17 @@ const CamelotWS = (() => {
   function loadNextDeck(trackId) { send({ cmd: 'load_next_deck', track_id: trackId }); }
   function loadDeck(deck, trackId) { send({ cmd: 'load_deck', deck: deck, track_id: trackId }); }
 
+  let _toastTimer = null;
+  function showStatusToast(msg, isError) {
+    const t = document.getElementById('status-toast');
+    if (!t) return;
+    t.textContent = msg;
+    t.style.borderColor = isError ? 'var(--vu-red)' : 'var(--deck-1)';
+    t.classList.add('visible');
+    clearTimeout(_toastTimer);
+    _toastTimer = setTimeout(() => t.classList.remove('visible'), 4000);
+  }
+
   function handleMessage(msg) {
     switch (msg.type) {
 
@@ -151,7 +162,8 @@ const CamelotWS = (() => {
       }
 
       case 'ack': break;
-      case 'error': { console.warn('Sidecar:', msg.message); AutopilotFeed.setStatus('ERROR', 'var(--vu-red)'); break; }
+      case 'status_message': { showStatusToast(msg.message); break; }
+      case 'error': { console.warn('Sidecar:', msg.message); AutopilotFeed.setStatus('ERROR', 'var(--vu-red)'); showStatusToast('Error: ' + msg.message, true); break; }
       case 'status': { if (msg.status) { if (msg.status.master_bpm) el('bpm-value').textContent = msg.status.master_bpm.toFixed(2); if (msg.status.active_deck) el('stat-active-deck').textContent = msg.status.active_deck.toUpperCase(); } break; }
     }
   }
@@ -230,6 +242,18 @@ const CamelotWS = (() => {
         : 'Scan music library folder (skips files already analyzed). Enter path:';
       const path = prompt(msg, 'C:\\Users\\Admin\\Music');
       if (path) send({ cmd: 'scan', path: path, force: force });
+    });
+
+    // AUTO START — one-click "just play me something good"
+    el('btn-auto-start').addEventListener('click', () => {
+      showStatusToast('Auto-starting... picking the best opening track.');
+      send({ cmd: 'auto_start' });
+    });
+
+    // AUTO MIX — autopilot: load best next track + trigger transition
+    el('btn-auto-advance').addEventListener('click', () => {
+      showStatusToast('Auto-mixing... loading the best next track.');
+      send({ cmd: 'auto_advance' });
     });
 
     // AUTOPILOT toggle
