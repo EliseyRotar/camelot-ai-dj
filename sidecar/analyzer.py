@@ -68,6 +68,15 @@ def _extract_metadata_from_path(filepath: str) -> Dict[str, str]:
 
 def analyze_track(filepath: str, sr: int = 22050) -> Dict[str, Any]:
     """Analyzes an audio file and returns its metadata and downsampled features."""
+    # File stats for incremental-scan skip logic
+    try:
+        file_stat = os.stat(filepath)
+        filesize = file_stat.st_size
+        file_mtime = file_stat.st_mtime
+    except OSError:
+        filesize = None
+        file_mtime = None
+
     # Load audio
     y, _ = librosa.load(filepath, sr=sr, mono=True)
     duration = librosa.get_duration(y=y, sr=sr)
@@ -111,7 +120,9 @@ def analyze_track(filepath: str, sr: int = 22050) -> Dict[str, Any]:
             'duration': duration,
             'bpm': bpm,
             'key_camelot': key_camelot,
-            'lufs_integrated': lufs_integrated
+            'lufs_integrated': lufs_integrated,
+            'filesize': filesize,
+            'file_mtime': file_mtime,
         },
         'features': {
             'beat_grid': beat_grid.astype(np.float32),
