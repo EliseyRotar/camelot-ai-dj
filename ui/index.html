@@ -27,6 +27,8 @@
       </div>
     </div>
     <div class="topbar-right">
+      <button class="toggle-btn auto-start-btn" id="btn-auto-start" title="One-click: pick the best track, load both decks, and start playing">&#9654; AUTO START</button>
+      <button class="toggle-btn auto-advance-btn" id="btn-auto-advance" title="Autopilot: load the best next track and mix it in">&#9654;&#9654; AUTO MIX</button>
       <button class="toggle-btn" id="btn-autopilot" data-active="false">
         <span class="ap-dot"></span>AUTOPILOT
       </button>
@@ -433,6 +435,9 @@
   <div id="scan-bar-track"><div id="scan-bar-fill"></div></div>
   <div id="scan-current-file">Initializing...</div>
 </div>
+
+<!-- Status toast (for auto-start / auto-advance messages) -->
+<div id="status-toast"></div>
 
 <script src="components/theme.js"></script>
 <script src="components/vu-meter.js"></script>
