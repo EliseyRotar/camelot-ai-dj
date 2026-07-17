@@ -5,6 +5,10 @@ import os
 import re
 from typing import Dict, Any
 
+# Where to store pre-decoded 22050Hz mono float32 audio as .npy files.
+# This makes Deck.load_track a ~33ms np.load() instead of an 8s librosa.load().
+AUDIO_CACHE_DIR = os.path.join(os.path.dirname(__file__), "audio_cache")
+
 # Krumhansl-Schmuckler key profiles
 KS_MAJOR = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
 KS_MINOR = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
@@ -64,6 +68,43 @@ def _extract_metadata_from_path(filepath: str) -> Dict[str, str]:
         else:
             title = base
     return {'title': title, 'artist': artist}
+
+
+def cache_audio_file(filepath: str, track_id: int, y_resampled: np.ndarray = None) -> str:
+    """Save the 22050Hz mono float32 audio to audio_cache/<track_id>.npy.
+    If y_resampled is provided (already at 22050 mono), use it directly;
+    otherwise decode + resample from the source file via soundfile/soxr (fast C path).
+    Returns the cache path."""
+    os.makedirs(AUDIO_CACHE_DIR, exist_ok=True)
+    cache_path = os.path.join(AUDIO_CACHE_DIR, f"{track_id}.npy")
+    if os.path.exists(cache_path):
+        return cache_path
+    if y_resampled is not None:
+        y = y_resampled.astype(np.float32, copy=False)
+    else:
+        # Fast decode path: soundfile (libsndfile C) + soxr resampler (C)
+        import soundfile as sf
+        try:
+            y_native, sr_native = sf.read(filepath, dtype="float32", always_2d=False)
+            if y_native.ndim > 1:
+                y_native = y_native.mean(axis=1)
+            if sr_native != 22050:
+                import soxr
+                y = soxr.resample(y_native, sr_native, 22050, quality="HQ").astype(np.float32)
+            else:
+                y = y_native.astype(np.float32, copy=False)
+        except Exception:
+            # Fallback to librosa (handles ffmpeg-backed formats like m4a/aac)
+            y, _ = librosa.load(filepath, sr=22050, mono=True)
+            y = y.astype(np.float32, copy=False)
+    np.save(cache_path, y)
+    return cache_path
+
+
+def get_cached_audio(track_id: int) -> str:
+    """Returns the path to the cached .npy audio file, or None if not cached."""
+    p = os.path.join(AUDIO_CACHE_DIR, f"{track_id}.npy")
+    return p if os.path.exists(p) else None
 
 
 def analyze_track(filepath: str, sr: int = 22050) -> Dict[str, Any]:
