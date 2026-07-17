@@ -1,16 +1,446 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Camelot AI DJ</title>
-    <link rel="stylesheet" href="styles/theme.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=1366, initial-scale=1.0">
+  <meta name="description" content="Camelot AI DJ — Professional autonomous DJ mixing powered by harmonic analysis and AI-driven autopilot.">
+  <title>Camelot AI DJ</title>
+  <link rel="stylesheet" href="styles/theme.css">
 </head>
 <body>
-    <div class="deck-container">
-        <!-- Canvas renderers go here -->
+
+<div id="app" data-view="play">
+
+  <!-- ── TOP BAR ── -->
+  <header id="topbar">
+    <div class="topbar-left">
+      <div id="logo"><span class="logo-dot"></span>CAMELOT</div>
+      <div class="view-toggles">
+        <button class="toggle-btn active" data-view="play">PLAY</button>
+        <button class="toggle-btn" data-view="library">LIBRARY</button>
+      </div>
     </div>
-    <script src="ws-client.js"></script>
-    <script src="components/canvas.js"></script>
+    <div class="topbar-center">
+      <div class="master-bpm-display">
+        <span class="master-bpm-label">MASTER BPM</span>
+        <span class="master-bpm-value" id="bpm-value">120.00</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <button class="toggle-btn" id="btn-autopilot" data-active="false">
+        <span class="ap-dot"></span>AUTOPILOT
+      </button>
+      <button class="toggle-btn" id="btn-scan">SCAN</button>
+      <button class="icon-btn" id="btn-settings" title="Settings">&#9881;</button>
+      <div class="sidecar-status">
+        <span class="status-dot" id="sidecar-dot"></span>
+        <span id="stat-sidecar">OFFLINE</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── PLAY VIEW: two decks + center mixer ── -->
+  <section id="play-view">
+
+    <!-- ── LEFT DECK (Deck A) ── -->
+    <div class="deck" data-deck="1">
+      <div class="deck-header">
+        <div class="deck-accent-bar"></div>
+        <div class="deck-label">DECK 1</div>
+        <div class="track-meta">
+          <span class="meta-key" id="da-key">--</span>
+          <span class="meta-bpm" id="da-bpm">---.--</span>
+        </div>
+      </div>
+
+      <div class="track-info">
+        <div class="track-title empty" id="da-title">No Track Loaded</div>
+        <div class="track-artist" id="da-artist">—</div>
+      </div>
+
+      <!-- Overview (full-track) waveform -->
+      <div class="waveform-overview">
+        <canvas id="overview-a"></canvas>
+        <div class="overview-playhead" id="da-overview-playhead"></div>
+      </div>
+
+      <!-- Stacked detail waveform (the signature Serato visual) -->
+      <div class="waveform-detail">
+        <canvas id="detail-a"></canvas>
+        <div class="detail-playhead"></div>
+        <div class="beatgrid-overlay" id="da-beatgrid"></div>
+      </div>
+
+      <!-- Hot cue pads -->
+      <div class="pad-section">
+        <div class="pad-modes">
+          <button class="pad-mode active" data-mode="hotcue">HOT CUE</button>
+          <button class="pad-mode" data-mode="roll">ROLL</button>
+          <button class="pad-mode" data-mode="slicer">SLICER</button>
+          <button class="pad-mode" data-mode="sampler">SAMPLER</button>
+        </div>
+        <div class="pads" id="da-pads">
+          <button class="pad" data-pad="1"><span class="pad-num">1</span></button>
+          <button class="pad" data-pad="2"><span class="pad-num">2</span></button>
+          <button class="pad" data-pad="3"><span class="pad-num">3</span></button>
+          <button class="pad" data-pad="4"><span class="pad-num">4</span></button>
+          <button class="pad" data-pad="5"><span class="pad-num">5</span></button>
+          <button class="pad" data-pad="6"><span class="pad-num">6</span></button>
+          <button class="pad" data-pad="7"><span class="pad-num">7</span></button>
+          <button class="pad" data-pad="8"><span class="pad-num">8</span></button>
+        </div>
+      </div>
+
+      <!-- Loop section -->
+      <div class="loop-section">
+        <button class="loop-btn" data-loop="1/8">1/8</button>
+        <button class="loop-btn" data-loop="1/4">1/4</button>
+        <button class="loop-btn" data-loop="1/2">1/2</button>
+        <button class="loop-btn active" data-loop="1">1</button>
+        <button class="loop-btn" data-loop="2">2</button>
+        <button class="loop-btn" data-loop="4">4</button>
+        <button class="loop-btn" data-loop="8">8</button>
+        <button class="loop-btn" data-loop="16">16</button>
+      </div>
+
+      <!-- Deck footer: jog wheel, transport, pitch -->
+      <div class="deck-footer">
+        <div class="pitch-section">
+          <div class="pitch-readout" id="da-pitch-readout">0.00%</div>
+          <div class="pitch-fader" id="da-pitch">
+            <div class="pitch-track">
+              <div class="pitch-cap" id="da-pitch-cap"></div>
+            </div>
+            <div class="pitch-ticks">
+              <span>+8</span><span>+4</span><span>0</span><span>-4</span><span>-8</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="jog-section">
+          <div class="jog-wheel" id="da-jog">
+            <div class="jog-rim"></div>
+            <div class="jog-platter">
+              <div class="jog-grooves"></div>
+              <div class="jog-label" id="da-jog-label">A</div>
+              <div class="jog-indicator" id="da-jog-indicator"></div>
+            </div>
+          </div>
+          <div class="transport">
+            <button class="transport-btn play-btn" id="da-play" data-playing="false">
+              <span class="play-icon"></span>
+            </button>
+            <button class="transport-btn cue-btn" id="da-cue">
+              <span class="cue-icon"></span>
+            </button>
+            <button class="transport-btn sync-btn" id="da-sync" data-active="false">SYNC</button>
+          </div>
+        </div>
+
+        <div class="time-section">
+          <div class="time-elapsed" id="da-time-elapsed">0:00</div>
+          <div class="time-remaining" id="da-time-remaining">0:00</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CENTER MIXER ── -->
+    <div class="mixer">
+      <!-- Channel 1 strip (left deck) -->
+      <div class="channel-strip" data-channel="1">
+        <div class="channel-header">CH 1</div>
+        <div class="assign-section">
+          <button class="assign-btn active" data-assign="a">A</button>
+          <button class="assign-btn" data-assign="thru">THRU</button>
+          <button class="assign-btn" data-assign="b">B</button>
+        </div>
+        <div class="knob-stack">
+          <div class="knob-wrap">
+            <div class="knob" id="da-gain-knob" data-value="0.75"><div class="knob-indicator"></div></div>
+            <span class="knob-label">GAIN</span>
+          </div>
+          <div class="knob-wrap">
+            <div class="knob eq-knob" id="da-hi-knob" data-value="0.5"><div class="knob-indicator"></div></div>
+            <span class="knob-label">HI</span>
+          </div>
+          <div class="knob-wrap">
+            <div class="knob eq-knob" id="da-mid-knob" data-value="0.5"><div class="knob-indicator"></div></div>
+            <span class="knob-label">MID</span>
+          </div>
+          <div class="knob-wrap">
+            <div class="knob eq-knob" id="da-lo-knob" data-value="0.5"><div class="knob-indicator"></div></div>
+            <span class="knob-label">LO</span>
+          </div>
+          <div class="knob-wrap">
+            <div class="knob filter-knob" id="da-filter-knob" data-value="0.5"><div class="knob-indicator"></div></div>
+            <span class="knob-label">FILTER</span>
+          </div>
+        </div>
+        <div class="fader-section">
+          <div class="vu-meter" id="vu-a">
+            <div class="vu-bar vu-l"></div>
+            <div class="vu-bar vu-r"></div>
+            <div class="vu-peak" id="vu-a-peak"></div>
+          </div>
+          <div class="channel-fader" id="da-fader">
+            <div class="fader-track">
+              <div class="fader-cap" id="da-fader-cap"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mixer center: master + crossfader -->
+      <div class="mixer-center">
+        <div class="master-section">
+          <div class="knob-wrap master-knob-wrap">
+            <div class="knob master-knob" id="master-gain-knob" data-value="0.8"><div class="knob-indicator"></div></div>
+            <span class="knob-label">MASTER</span>
+          </div>
+          <div class="master-vu">
+            <div class="vu-bar vu-l"></div>
+            <div class="vu-bar vu-r"></div>
+          </div>
+        </div>
+
+        <div class="crossfader-section">
+          <span class="xfader-label">A</span>
+          <div class="crossfader" id="crossfader">
+            <div class="crossfader-track">
+              <div class="crossfader-cap" id="crossfader-cap"></div>
+            </div>
+          </div>
+          <span class="xfader-label">B</span>
+        </div>
+
+        <!-- Autopilot recommendations panel -->
+        <div class="autopilot-panel">
+          <div class="autopilot-header">
+            <span class="ap-title">&#11022; AUTOPILOT</span>
+            <span class="ap-status" id="ap-status">READY</span>
+          </div>
+          <div class="rec-list" id="rec-list">
+            <div class="rec-empty">Load a track to see AI recommendations</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Channel 2 strip (right deck) -->
+      <div class="channel-strip" data-channel="2">
+        <div class="channel-header">CH 2</div>
+        <div class="assign-section">
+          <button class="assign-btn" data-assign="a">A</button>
+          <button class="assign-btn" data-assign="thru">THRU</button>
+          <button class="assign-btn active" data-assign="b">B</button>
+        </div>
+        <div class="knob-stack">
+          <div class="knob-wrap">
+            <div class="knob" id="db-gain-knob" data-value="0.75"><div class="knob-indicator"></div></div>
+            <span class="knob-label">GAIN</span>
+          </div>
+          <div class="knob-wrap">
+            <div class="knob eq-knob" id="db-hi-knob" data-value="0.5"><div class="knob-indicator"></div></div>
+            <span class="knob-label">HI</span>
+          </div>
+          <div class="knob-wrap">
+            <div class="knob eq-knob" id="db-mid-knob" data-value="0.5"><div class="knob-indicator"></div></div>
+            <span class="knob-label">MID</span>
+          </div>
+          <div class="knob-wrap">
+            <div class="knob eq-knob" id="db-lo-knob" data-value="0.5"><div class="knob-indicator"></div></div>
+            <span class="knob-label">LO</span>
+          </div>
+          <div class="knob-wrap">
+            <div class="knob filter-knob" id="db-filter-knob" data-value="0.5"><div class="knob-indicator"></div></div>
+            <span class="knob-label">FILTER</span>
+          </div>
+        </div>
+        <div class="fader-section">
+          <div class="vu-meter" id="vu-b">
+            <div class="vu-bar vu-l"></div>
+            <div class="vu-bar vu-r"></div>
+            <div class="vu-peak" id="vu-b-peak"></div>
+          </div>
+          <div class="channel-fader" id="db-fader">
+            <div class="fader-track">
+              <div class="fader-cap" id="db-fader-cap"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── RIGHT DECK (Deck B) ── -->
+    <div class="deck deck-right" data-deck="2">
+      <div class="deck-header">
+        <div class="deck-accent-bar"></div>
+        <div class="deck-label">DECK 2</div>
+        <div class="track-meta">
+          <span class="meta-key" id="db-key">--</span>
+          <span class="meta-bpm" id="db-bpm">---.--</span>
+        </div>
+      </div>
+
+      <div class="track-info">
+        <div class="track-title empty" id="db-title">No Track Loaded</div>
+        <div class="track-artist" id="db-artist">—</div>
+      </div>
+
+      <div class="waveform-overview">
+        <canvas id="overview-b"></canvas>
+        <div class="overview-playhead" id="db-overview-playhead"></div>
+      </div>
+
+      <div class="waveform-detail">
+        <canvas id="detail-b"></canvas>
+        <div class="detail-playhead"></div>
+        <div class="beatgrid-overlay" id="db-beatgrid"></div>
+      </div>
+
+      <div class="pad-section">
+        <div class="pad-modes">
+          <button class="pad-mode active" data-mode="hotcue">HOT CUE</button>
+          <button class="pad-mode" data-mode="roll">ROLL</button>
+          <button class="pad-mode" data-mode="slicer">SLICER</button>
+          <button class="pad-mode" data-mode="sampler">SAMPLER</button>
+        </div>
+        <div class="pads" id="db-pads">
+          <button class="pad" data-pad="1"><span class="pad-num">1</span></button>
+          <button class="pad" data-pad="2"><span class="pad-num">2</span></button>
+          <button class="pad" data-pad="3"><span class="pad-num">3</span></button>
+          <button class="pad" data-pad="4"><span class="pad-num">4</span></button>
+          <button class="pad" data-pad="5"><span class="pad-num">5</span></button>
+          <button class="pad" data-pad="6"><span class="pad-num">6</span></button>
+          <button class="pad" data-pad="7"><span class="pad-num">7</span></button>
+          <button class="pad" data-pad="8"><span class="pad-num">8</span></button>
+        </div>
+      </div>
+
+      <div class="loop-section">
+        <button class="loop-btn" data-loop="1/8">1/8</button>
+        <button class="loop-btn" data-loop="1/4">1/4</button>
+        <button class="loop-btn" data-loop="1/2">1/2</button>
+        <button class="loop-btn active" data-loop="1">1</button>
+        <button class="loop-btn" data-loop="2">2</button>
+        <button class="loop-btn" data-loop="4">4</button>
+        <button class="loop-btn" data-loop="8">8</button>
+        <button class="loop-btn" data-loop="16">16</button>
+      </div>
+
+      <div class="deck-footer">
+        <div class="pitch-section">
+          <div class="pitch-readout" id="db-pitch-readout">0.00%</div>
+          <div class="pitch-fader" id="db-pitch">
+            <div class="pitch-track">
+              <div class="pitch-cap" id="db-pitch-cap"></div>
+            </div>
+            <div class="pitch-ticks">
+              <span>+8</span><span>+4</span><span>0</span><span>-4</span><span>-8</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="jog-section">
+          <div class="jog-wheel" id="db-jog">
+            <div class="jog-rim"></div>
+            <div class="jog-platter">
+              <div class="jog-grooves"></div>
+              <div class="jog-label" id="db-jog-label">B</div>
+              <div class="jog-indicator" id="db-jog-indicator"></div>
+            </div>
+          </div>
+          <div class="transport">
+            <button class="transport-btn play-btn" id="db-play" data-playing="false">
+              <span class="play-icon"></span>
+            </button>
+            <button class="transport-btn cue-btn" id="db-cue">
+              <span class="cue-icon"></span>
+            </button>
+            <button class="transport-btn sync-btn" id="db-sync" data-active="false">SYNC</button>
+          </div>
+        </div>
+
+        <div class="time-section">
+          <div class="time-elapsed" id="db-time-elapsed">0:00</div>
+          <div class="time-remaining" id="db-time-remaining">0:00</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── LIBRARY VIEW (bottom panel, toggleable) ── -->
+  <section id="library-panel">
+    <div class="library-search">
+      <span class="search-icon">&#128269;</span>
+      <input type="text" id="lib-search-input" placeholder="Search library..." />
+      <span class="lib-count" id="lib-count">0 tracks</span>
+    </div>
+    <div class="library-body">
+      <div class="library-tree">
+        <div class="tree-section">
+          <div class="tree-header">LIBRARY</div>
+          <div class="tree-item active" data-source="all">All Tracks</div>
+          <div class="tree-item" data-source="recent">Recent</div>
+        </div>
+        <div class="tree-section">
+          <div class="tree-header">AUTOPILOT</div>
+          <div class="tree-item" data-source="recs">Recommendations</div>
+        </div>
+      </div>
+      <div class="library-table">
+        <div class="table-header">
+          <div class="col col-num">#</div>
+          <div class="col col-title">TITLE</div>
+          <div class="col col-artist">ARTIST</div>
+          <div class="col col-bpm">BPM</div>
+          <div class="col col-key">KEY</div>
+          <div class="col col-time">TIME</div>
+          <div class="col col-lufs">LUFS</div>
+        </div>
+        <div class="table-body" id="lib-table-body">
+          <div class="table-empty">No tracks loaded. Click SCAN to analyze a music folder.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── FOOTER ── -->
+  <footer id="footer">
+    <div class="footer-left">
+      <span class="footer-stat"><span class="lbl">DECK</span> <span class="val" id="stat-active-deck">A</span></span>
+      <span class="footer-stat"><span class="lbl">TECHNIQUE</span> <span class="val" id="stat-technique">Long Blend</span></span>
+      <span class="footer-stat"><span class="lbl">LIBRARY</span> <span class="val" id="stat-library">0</span></span>
+    </div>
+    <div class="footer-center">
+      <div class="technique-row">
+        <button class="tech-btn armed" data-tech="LongBlend">LONG BLEND</button>
+        <button class="tech-btn" data-tech="BassSwap">BASS SWAP</button>
+        <button class="tech-btn" data-tech="QuickCut">QUICK CUT</button>
+        <button class="tech-btn" data-tech="EchoOut">ECHO OUT</button>
+        <button class="tech-btn trigger" id="tech-trigger">&#9654; TRIGGER</button>
+      </div>
+    </div>
+    <div class="footer-right">
+      <span class="footer-stat"><span class="lbl">VERSION</span> <span class="val">0.1.0</span></span>
+    </div>
+  </footer>
+
+</div>
+
+<!-- Scan overlay -->
+<div id="scan-overlay">
+  <div id="scan-label">Scanning Library...</div>
+  <div id="scan-bar-track"><div id="scan-bar-fill"></div></div>
+  <div id="scan-current-file">Initializing...</div>
+</div>
+
+<script src="components/theme.js"></script>
+<script src="components/vu-meter.js"></script>
+<script src="components/canvas.js"></script>
+<script src="components/knobs.js"></script>
+<script src="components/jog.js"></script>
+<script src="components/library.js"></script>
+<script src="components/autopilot-feed.js"></script>
+<script src="ws-client.js"></script>
 </body>
 </html>
