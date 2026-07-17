@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 
-from analyzer import analyze_track
+from analyzer import analyze_track, cache_audio_file, get_cached_audio
 from library import add_track, get_db, get_track_features, get_track_by_filepath, has_features
 from mixing_engine import engine, MASTER_SR, BLOCK_SIZE
 from techniques import LongBlend, BassSwap, QuickCut, EchoOut
@@ -170,7 +170,9 @@ def scan_directory_task(directory_path: str, force: bool = False):
         print(f"[{idx+1}/{len(files)}] analyzing: {filepath}")
         try:
             result = analyze_track(filepath)
-            add_track(result['metadata'], result['features'])
+            track_id = add_track(result['metadata'], result['features'])
+            if track_id is not None:
+                cache_audio_file(filepath, track_id)
             analyzed += 1
         except Exception as e:
             print(f"Error analyzing {filepath}: {e}")
@@ -369,6 +371,15 @@ async def handle_ws_command(cmd: dict, websocket: WebSocket):
         engine.trigger_transition()
         await websocket.send_json({"type": "ack", "cmd": "trigger_transition"})
 
+    elif action == 'auto_start':
+        # One-click: pick the best opening track, load deck A, start engine, fire,
+        # then load the autopilot's top recommendation onto deck B ready to go.
+        asyncio.create_task(_auto_start_task(websocket))
+
+    elif action == 'auto_advance':
+        # Autopilot-driven: load the best next track onto the inactive deck and trigger a transition.
+        asyncio.create_task(_auto_advance_task(websocket))
+
     elif action == 'set_autopilot':
         on = bool(cmd.get('enabled', False))
         _app_state["autopilot_enabled"] = on
@@ -466,11 +477,148 @@ async def _telemetry_loop():
 async def _startup():
     asyncio.create_task(_telemetry_loop())
     print("Telemetry loop started.")
+    # Warm up librosa's numba JIT in a background thread so the first deck load
+    # isn't hit by the ~8s cold-start cost. Subsequent loads are ~1s (or 33ms from cache).
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _warmup_librosa)
+
+
+def _warmup_librosa():
+    try:
+        import librosa, numpy as np
+        print("[warmup] JIT-compiling librosa (one-time, ~8s)...")
+        t0 = time.time()
+        # Prime time_stretch + beat_track + resample with tiny dummy signals
+        dummy = np.zeros(22050, dtype=np.float32)
+        librosa.effects.time_stretch(dummy, rate=1.0)
+        librosa.beat.beat_track(y=np.zeros(22050 * 4, dtype=np.float32), sr=22050)
+        librosa.resample(dummy, orig_sr=22050, target_sr=44100)
+        print(f"[warmup] done in {time.time()-t0:.1f}s — deck loads will be fast now.")
+    except Exception as e:
+        print(f"[warmup] skipped ({e})")
 
 
 @app.on_event("shutdown")
 async def _shutdown():
     engine.stop_stream()
+
+
+# ── Auto-start: one-click "just play me something good" ────────────────────
+def _pick_best_opener() -> dict:
+    """Pick the best track to START a set with: prefer high-energy, 120-130 BPM, common keys."""
+    conn = get_db()
+    c = conn.cursor()
+    c.execute("SELECT * FROM tracks ORDER BY id")
+    tracks = [dict(r) for r in c.fetchall()]
+    conn.close()
+    if not tracks:
+        return None
+
+    def opener_score(t):
+        bpm = t['bpm'] or 0
+        lufs = t['lufs_integrated'] or -23
+        # Prefer 118-128 BPM (house/tech tempo, easy to mix out of)
+        bpm_score = max(0, 100 - abs(bpm - 123) * 4)
+        # Prefer louder tracks (higher energy opener)
+        lufs_score = max(0, min(100, (lufs + 20) * 10))
+        # Prefer common Camelot keys (8A, 8B, 5A, 9A) for max harmonic exit options
+        common_keys = {'8A', '8B', '5A', '9A', '7A', '12A'}
+        key_score = 100 if t['key_camelot'] in common_keys else 50
+        return bpm_score * 0.5 + lufs_score * 0.3 + key_score * 0.2
+
+    tracks.sort(key=lambda t: opener_score(t), reverse=True)
+    return tracks[0]
+
+
+async def _auto_start_task(websocket):
+    """One-click: load the best opener to deck A, start the engine, fire, then load the
+    top autopilot recommendation onto deck B ready for a transition."""
+    try:
+        opener = _pick_best_opener()
+        if opener is None:
+            await websocket.send_json({"type": "error", "message": "Library is empty. Scan some music first."})
+            return
+
+        engine.master_bpm = float(opener['bpm'] or 120.0)
+        await broadcast({"type": "master_bpm", "bpm": engine.master_bpm})
+
+        # 1. Load + fire deck A
+        await broadcast({"type": "status_message", "message": f"Loading '{opener['title']}' onto Deck A..."})
+        loop = asyncio.get_event_loop()
+        result_a = await loop.run_in_executor(None, _load_deck_blocking, "a", opener['id'])
+        await broadcast({"type": "track_loaded", **result_a})
+        Library_js_side(opener['id'], 'a')
+
+        # Start the audio engine if not already running
+        if not engine._stream_started:
+            await loop.run_in_executor(None, engine.start_stream)
+
+        engine.deck_a.fire_on_beat()
+        await broadcast({"type": "ack", "cmd": "fire", "deck": "a"})
+
+        # 2. Get autopilot recommendations and load the best one onto deck B
+        await broadcast({"type": "status_message", "message": "Finding the best next track..."})
+        from autopilot import get_recommendations
+        recs = await loop.run_in_executor(None, get_recommendations, opener['id'], 1)
+        await broadcast({"type": "recommendations", "recs": recs})
+
+        if recs and len(recs) > 0:
+            best_next = recs[0]['track']
+            await broadcast({"type": "status_message", "message": f"Loading '{best_next['title']}' onto Deck B..."})
+            result_b = await loop.run_in_executor(None, _load_deck_blocking, "b", best_next['id'])
+            await broadcast({"type": "track_loaded", **result_b})
+
+        await broadcast({"type": "status_message", "message": "Ready! Deck A is playing. Click TRIGGER or AUTOPILOT to mix in Deck B."})
+        await websocket.send_json({"type": "ack", "cmd": "auto_start"})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        await websocket.send_json({"type": "error", "message": f"Auto-start failed: {e}"})
+
+
+def Library_js_side(track_id, deck):
+    """Helper to mark a track as loaded in the JS library (broadcasts a hint)."""
+    # The JS side updates via track_loaded; this is a no-op placeholder kept for clarity.
+    pass
+
+
+async def _auto_advance_task(websocket):
+    """Autopilot: load the best next track onto the inactive deck and trigger a transition."""
+    try:
+        loop = asyncio.get_event_loop()
+        active = engine.active_deck  # 'A' or 'B'
+        active_letter = active.lower()
+        inactive = "b" if active == "A" else "a"
+
+        # Find the currently-playing deck's track id
+        active_deck = engine.deck_a if active == "A" else engine.deck_b
+        active_track_id = _app_state.get(f"loaded_track_id_{active_letter}")
+
+        if active_track_id is None:
+            await websocket.send_json({"type": "error", "message": "No track on the active deck."})
+            return
+
+        from autopilot import get_recommendations
+        recs = await loop.run_in_executor(None, get_recommendations, active_track_id, 1)
+        await broadcast({"type": "recommendations", "recs": recs})
+
+        if not recs:
+            await websocket.send_json({"type": "error", "message": "No recommendations available."})
+            return
+
+        best = recs[0]['track']
+        await broadcast({"type": "status_message", "message": f"Auto-advancing to '{best['title']}'..."})
+        result = await loop.run_in_executor(None, _load_deck_blocking, inactive, best['id'])
+        await broadcast({"type": "track_loaded", **result})
+
+        # Fire the incoming deck and trigger the armed transition
+        incoming_deck = engine.deck_b if inactive == "b" else engine.deck_a
+        incoming_deck.fire_on_beat()
+        engine.trigger_transition()
+
+        await websocket.send_json({"type": "ack", "cmd": "auto_advance"})
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        await websocket.send_json({"type": "error", "message": f"Auto-advance failed: {e}"})
 
 
 # ── Async scan with progress broadcast (incremental) ───────────────────────
@@ -532,7 +680,10 @@ async def _ws_scan_task(directory_path: str, force: bool = False):
         })
         try:
             result = await loop.run_in_executor(single_pool, analyze_track, filepath)
-            add_track(result['metadata'], result['features'])
+            track_id = add_track(result['metadata'], result['features'])
+            # Pre-decode and cache the 22050Hz mono audio as .npy so Deck.load_track is instant
+            if track_id is not None:
+                await loop.run_in_executor(single_pool, cache_audio_file, filepath, track_id)
             analyzed += 1
         except Exception as e:
             failed += 1
