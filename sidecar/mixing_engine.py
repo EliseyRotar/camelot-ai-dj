@@ -1,8 +1,10 @@
 import sounddevice as sd
 import numpy as np
+import os
 import librosa
 from library import get_track_features, get_db
 from techniques import TransitionManager, TransitionTechnique, LongBlend, BassSwap, QuickCut, EchoOut
+from analyzer import get_cached_audio
 
 MASTER_SR = 22050
 BLOCK_SIZE = 2048
@@ -40,26 +42,37 @@ class Deck:
     def load_track(self, filepath: str, track_id: int, original_bpm: float,
                    original_lufs: float, target_bpm: float,
                    title: str = "", artist: str = ""):
-        print(f"[{self.name}] Loading {filepath}...")
-        y, _ = librosa.load(filepath, sr=MASTER_SR, mono=True)
+        print(f"[{self.name}] Loading '{title}' (id={track_id})...")
+        # 1. Load audio — prefer the pre-decoded .npy cache (~33ms) over librosa.load (~8s cold)
+        cache_path = get_cached_audio(track_id)
+        if cache_path:
+            y = np.load(cache_path)
+            print(f"[{self.name}]   loaded from cache ({len(y)} samples)")
+        else:
+            print(f"[{self.name}]   cache miss — decoding via librosa (this is slow on first load)...")
+            y, _ = librosa.load(filepath, sr=MASTER_SR, mono=True)
 
+        # 2. LUFS normalize
         lufs_delta = TARGET_LUFS - original_lufs
         norm_gain = 10 ** (lufs_delta / 20.0)
         y = y * norm_gain
-        print(f"[{self.name}] LUFS normalized (Delta: {lufs_delta:.2f}dB, Multiplier: {norm_gain:.2f})")
+        print(f"[{self.name}]   LUFS norm (delta={lufs_delta:.2f}dB, gain={norm_gain:.2f})")
 
+        # 3. Beat grid — use the DB-cached grid, never recompute (saves 6s)
         features = get_track_features(track_id)
         if features and features['beat_grid'] is not None and len(features['beat_grid']) > 0:
             self.beat_grid = features['beat_grid']
         else:
+            # Only fall back to recomputing if the DB row is somehow missing
             _, beat_frames = librosa.beat.beat_track(y=y, sr=MASTER_SR)
             self.beat_grid = librosa.frames_to_time(beat_frames, sr=MASTER_SR)
 
+        # 4. Time-stretch to target BPM (load-time, one-shot)
         self.original_bpm = original_bpm
         if original_bpm > 0 and target_bpm > 0:
             rate = target_bpm / original_bpm
             if abs(rate - 1.0) > 0.01:
-                print(f"[{self.name}] Stretching from {original_bpm:.1f} to {target_bpm:.1f} BPM (Rate: {rate:.3f})")
+                print(f"[{self.name}]   stretching {original_bpm:.1f}->{target_bpm:.1f} BPM (rate={rate:.3f})")
                 y = librosa.effects.time_stretch(y, rate=rate)
                 self.beat_grid = self.beat_grid / rate
 
@@ -72,7 +85,7 @@ class Deck:
         self.title = title
         self.artist = artist
         self.last_rms = 0.0
-        print(f"[{self.name}] Loaded '{title}' successfully. {len(self.audio)} samples ({self.duration:.1f}s).")
+        print(f"[{self.name}] Loaded '{title}' — {len(self.audio)} samples ({self.duration:.1f}s).")
 
     def fire_on_beat(self, target_beat_time_sec: float = -1.0):
         if target_beat_time_sec is not None and target_beat_time_sec >= 0 and len(self.beat_grid) > 0:
